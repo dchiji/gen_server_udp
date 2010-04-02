@@ -59,8 +59,8 @@
         socket :: gen_udp:socket()
     }).
 
--define(DEFAULT_UDP_PORT, 50210).
--define(DEFAULT_UDP_DEBUG_OPTIONS, {}).
+-define(DEFAULT_UDP_PORT, 10210).
+-define(DEFAULT_UDP_DEBUG_OPTIONS, [trace]).
 -define(DEFAULT_UDP_TIMEOUT, 1000).
 -define(UDP_SOCKET_OPTIONS, [binary]).
 
@@ -94,7 +94,7 @@ start_common(Start, FName, Name, Module, Args, RawOptions) ->
     case analysis_options(RawOptions) of
         {ok, Options} ->
             Start(Name, ?MODULE, [Module, Options, Args], Options#options.gen_server_options),
-            {ok, {node(), gen_server_udp_receive:port()}};
+            {ok, {get_addr(), Options#options.udp_port}};
         {error, Message} ->
             io:format("[gen_server_udp:~p] ~p~n", [FName, Message]),
             {error, Message}
@@ -147,10 +147,9 @@ call({Node, Port}, Message, Timeout) when (is_atom(Node) orelse is_tuple(Node) o
     Ref = make_ref(),
     case gen_server_udp_receive:call({set_pid, {self(), Ref}}) of
         {ok, {Socket, ReceivePort}} ->
-            From   = {{node(), ReceivePort}, Ref},
+            From   = {{get_addr(), ReceivePort}, Ref},
             Packet = term_to_binary({'$gen_call', From, Message}),
             gen_udp:send(Socket, Node, Port, Packet),
-            io:format("sended: ~p, ~p, ~p~n", [Node, Port, Packet]),
             return(Ref, Timeout);
         {error, Reason} ->
             {error, Reason}
@@ -159,12 +158,9 @@ call({Node, Port}, Message, Timeout) when (is_atom(Node) orelse is_tuple(Node) o
 return(Ref, Timeout) ->
     receive
         {Ref, Result} -> Result;
-        Any ->
-            io:format("received: ~p~n", [Any])
-    after
-        Timeout -> {error, timeout}
+        Any           -> io:format("received: ~p~n", [Any])
+    after Timeout     -> {error, timeout}
     end.
-
 
 
 %%====================================================================
@@ -180,7 +176,7 @@ return(Ref, Timeout) ->
 %%--------------------------------------------------------------------
 init([Module, Options, Args]) ->
     Port = Options#options.udp_port,
-    case gen_udp:open(Port, ?UDP_SOCKET_OPTIONS) of
+    case catch gen_udp:open(Port, ?UDP_SOCKET_OPTIONS) of
         {ok, Socket} ->
             case gen_server_udp_receive:start(Port + 1) of
                 {ok, _Server} ->
@@ -189,7 +185,9 @@ init([Module, Options, Args]) ->
                     {stop, Any}
             end;
         {error, Reason} ->
-            {stop, {error, Reason}}
+            {stop, {error, Reason}};
+        Any ->
+            {stop, {error, caught}}
     end.
 
 call_module_init(Module, Args, Socket, Options) ->
@@ -314,7 +312,8 @@ reply({From, Ref}, Message) when is_pid(From) andalso is_reference(Ref) ->
 reply({{Node, Port}, Ref}, Message) when is_reference(Ref) ->
     case gen_server_udp_receive:call(get_socket) of
         {ok, Socket} ->
-            Packet = term_to_binary(Message),
+            Packet = term_to_binary({Ref, Message}),
+            io:format("[main] sended to ~p~n", [Socket]),
             gen_udp:send(Socket, Node, Port, Packet);
         Any ->
             Any
@@ -370,3 +369,11 @@ state_to_options([Type, Option | Tail], UdpOptions, GenServerOptions) ->
 code_change(_, _, State) ->
     {ok, State}.
 
+
+%%====================================================================
+%% utilities
+%%====================================================================
+
+get_addr() ->
+    {ok, [{Addr, _, _} | _]} = inet:getif(),
+    Addr.

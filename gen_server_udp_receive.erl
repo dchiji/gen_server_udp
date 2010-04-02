@@ -56,8 +56,8 @@
     }).
 
 -define(DEFAULT_TIMEOUT, 1000).
--define(DEFAULT_DEBUG_OPT, trace).
--define(DEFAULT_UDP_PORT, 50211).
+-define(DEFAULT_DEBUG_OPT, [binary]).
+-define(DEFAULT_UDP_PORT, 10211).
 -define(UDP_SOCKET_OPTIONS, [binary]).
 -define(ERROR_CASE_SLEEP_TIME, 500).
 
@@ -142,7 +142,7 @@ init([Port, Timeout, Debug]) ->
                 ets:new(ref_table, [set, public, named_table]),
                 timer:sleep(infinity)
         end),
-    case gen_udp:open(Port, ?UDP_SOCKET_OPTIONS) of
+    case catch gen_udp:open(Port, ?UDP_SOCKET_OPTIONS) of
         {ok, Socket} ->
             State = #state{
                 socket  = Socket,
@@ -150,11 +150,14 @@ init([Port, Timeout, Debug]) ->
                 timeout = Timeout,
                 debug   = Debug
             },
-            io:format("Port=~p~n", [Port]),
             {ok, State};
         {error, Reason} ->
             {stop, {error, Reason}}
     end.
+
+
+handle_call(get_socket, From, State) ->
+    {reply, {ok, State#state.socket}, State};
 
 
 handle_call({set_pid, {Pid, Ref}}, _From, State) ->
@@ -175,14 +178,13 @@ handle_cast(_, State) ->
 
 
 handle_info({udp, _, _, _, Packet}, State) ->
-    io:format("~n~nok~n~n"),
     case binary_to_term(Packet) of
-        {StringPid, {Ref, Reply}} ->
+        {StringPid, {Ref, Reply}} when is_list(StringPid) == true ->
             list_to_pid(StringPid) ! {Ref, Reply};
         {Ref, Reply} ->
             [{Ref, Pid}] = ets:lookup(ref_table, Ref),
             Pid ! {Ref, Reply},
-            ets:delete(Ref);
+            ets:delete(ref_table, Ref);
         _ ->
             pass
     end,

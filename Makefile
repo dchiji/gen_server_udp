@@ -15,7 +15,7 @@ all: compile
 compile: ${MODS:%=%.beam}
 
 test: compile
-	${ERL} -sname test +P 4000000 -s gen_server_udp_test test
+	${ERL} -sname test +P 4000000 -noshell -s gen_server_udp_test test
 
 clean:
 	rm -rf *.beam erl_crash.dump
